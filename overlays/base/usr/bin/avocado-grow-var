@@ -40,8 +40,17 @@ if [ -n "$dm_dev" ]; then
     : "${blk_dev:=$var_dev}"
 fi
 
-disk=/dev/$(lsblk -no PKNAME "$blk_dev" | head -n 1)
+# -d (no dependents): without it lsblk also lists the partition's holders, and
+# for a dm slave the dm child's row comes first - its PKNAME is the partition
+# itself, so "disk" resolved to /dev/nvme0n1p16 and `sgdisk -e` wrote a GPT
+# over the LUKS2 header (observed on a Jetson Orin Nano with encrypted /var).
+disk=/dev/$(lsblk -dno PKNAME "$blk_dev")
 part=$(printf '%s\n' "$blk_dev" | grep -oE '[0-9]+$')
+# Never let sgdisk near anything that is not a whole disk holding a table.
+if [ "$(lsblk -dno TYPE "$disk" 2>/dev/null)" != "disk" ]; then
+    echo "grow-var: $disk (parent of $blk_dev) is not a whole disk; refusing to touch it." >&2
+    exit 1
+fi
 ptable=$(lsblk -dno PTTYPE "$disk")
 echo "grow-var: $var_dev (via $blk_dev) on $disk (partition $part, $ptable table)."
 
