@@ -40,8 +40,17 @@ if [ -n "$dm_dev" ]; then
     : "${blk_dev:=$var_dev}"
 fi
 
-disk=/dev/$(lsblk -no PKNAME "$blk_dev" | head -n 1)
+# -d (no dependents): without it lsblk also lists the partition's holders, and
+# for a dm slave the dm child's row comes first - its PKNAME is the partition
+# itself, so "disk" resolved to /dev/nvme0n1p16 and `sgdisk -e` wrote a GPT
+# over the LUKS2 header (observed on a Jetson Orin Nano with encrypted /var).
+disk=/dev/$(lsblk -dno PKNAME "$blk_dev")
 part=$(printf '%s\n' "$blk_dev" | grep -oE '[0-9]+$')
+# Never let sgdisk near anything that is not a whole disk holding a table.
+if [ "$(lsblk -dno TYPE "$disk" 2>/dev/null)" != "disk" ]; then
+    echo "grow-var: $disk (parent of $blk_dev) is not a whole disk; refusing to touch it." >&2
+    exit 1
+fi
 ptable=$(lsblk -dno PTTYPE "$disk")
 echo "grow-var: $var_dev (via $blk_dev) on $disk (partition $part, $ptable table)."
 
@@ -115,9 +124,11 @@ if [ "$blk_dev" != "$var_dev" ]; then
         # resize cannot happen here.  The initramfs (cryptsetup-var.sh) already
         # handles LUKS resize when it detects partition_sectors > dm_sectors on
         # the next boot — with the key still available at that point.
+        # Sizes from sysfs: blockdev(8) is not in the runtime image.
+        sectors() { cat "/sys/class/block/$(basename "$(readlink -f "$1")")/size"; }
         data_offset=$(dmsetup table "$dm_name" | awk '{print $8}')
-        expected_dm=$(( $(blockdev --getsz "$blk_dev") - data_offset ))
-        dm_sectors=$(blockdev --getsz "$var_dev")
+        expected_dm=$(( $(sectors "$blk_dev") - data_offset ))
+        dm_sectors=$(sectors "$var_dev")
         if [ "$dm_sectors" -lt "$expected_dm" ]; then
             echo "grow-var: LUKS container ($dm_sectors sectors) < partition ($expected_dm sectors)."
             echo "grow-var: partition extended — cryptsetup-var.sh will resize LUKS + btrfs on next boot."
