@@ -7,7 +7,7 @@ extensions:
     summary: Avocado development tools
     description: Avocado development tools
     license: Apache-2.0
-    url: https://github.com/avocadolinux/avocado-os
+    url: https://github.com/avocado-linux/ext-dev
     vendor: Avocado Linux <info@avocadolinux.org>
 
     enable_services:
